@@ -1,13 +1,13 @@
-// Password Manager with GUI and Functionality
+// Password Manager with GUI and Improved Main Menu + Weak Password Check
 #include <SFML/Graphics.hpp>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
-
+#include <ctime>
+#include <cstdlib>
 #include "encryption.h"
-
 
 struct Account {
     std::string site;
@@ -66,16 +66,32 @@ void loadPasswords() {
     file.close();
 }
 
+bool isWeakPassword(const std::string& pass) {
+    return pass.length() < 8 ||
+           std::all_of(pass.begin(), pass.end(), ::isdigit) ||
+           std::all_of(pass.begin(), pass.end(), ::isalpha);
+}
+
+std::string generateStrongPassword() {
+    const std::string chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()";
+    std::string result;
+    for (int i = 0; i < 12; ++i) {
+        result += chars[rand() % chars.size()];
+    }
+    return result;
+}
+
 int main() {
+    srand(static_cast<unsigned>(time(0)));
     loadUsers();
     loadPasswords();
     sf::RenderWindow window(sf::VideoMode(800, 600), "Password Manager");
     sf::Font font;
     font.loadFromFile("assets/arial.ttf");
 
-    enum Screen { LOGIN, MENU, ADD_ACCOUNT, SHOW_PASSWORDS, CREATE_ACCOUNT, ERROR_MSG } screen = LOGIN;
+    enum Screen { LOGIN, MENU, ADD_ACCOUNT, SHOW_PASSWORDS, CREATE_ACCOUNT, ERROR_MSG, CONFIRM_STRONG } screen = LOGIN;
 
-    std::string input1 = "", input2 = "", errorMsg = "";
+    std::string input1 = "", input2 = "", errorMsg = "", suggestedPassword = "";
     std::string siteInput = "", sitePass = "";
     bool inputFocus1 = false, inputFocus2 = false;
     bool siteFocus = false, passFocus = false;
@@ -99,10 +115,12 @@ int main() {
         return box.getGlobalBounds();
     };
 
-    auto drawButton = [&](sf::RenderWindow& window, sf::Font& font, std::string label, sf::Vector2f pos) {
-        sf::RectangleShape button(sf::Vector2f(200, 50));
+    auto drawButton = [&](sf::RenderWindow& window, sf::Font& font, std::string label, sf::Vector2f pos, sf::Vector2f size = {250, 50}) {
+        sf::RectangleShape button(size);
         button.setFillColor(sf::Color(100, 100, 100));
         button.setPosition(pos);
+        button.setOutlineThickness(2);
+        button.setOutlineColor(sf::Color(150, 150, 150));
         window.draw(button);
 
         sf::Text buttonText(label, font, 20);
@@ -150,22 +168,38 @@ int main() {
                         input1 = input2 = "";
                     }
                 } else if (screen == MENU) {
-                    if (drawButton(window, font, "1. Add Account", {100, 150}).contains(mousePos)) screen = ADD_ACCOUNT;
-                    if (drawButton(window, font, "2. Show Passwords", {100, 220}).contains(mousePos)) screen = SHOW_PASSWORDS;
-                    if (drawButton(window, font, "3. Exit", {100, 290}).contains(mousePos)) window.close();
+                    float startX = 275, startY = 180;
+                    if (drawButton(window, font, "1. Add Account", {startX, startY}).contains(mousePos)) screen = ADD_ACCOUNT;
+                    if (drawButton(window, font, "2. Show Passwords", {startX, startY + 80}).contains(mousePos)) screen = SHOW_PASSWORDS;
+                    if (drawButton(window, font, "3. Exit", {startX, startY + 160}).contains(mousePos)) window.close();
                 } else if (screen == ADD_ACCOUNT) {
                     if (drawInputBox(window, font, "App/Website:", siteInput, {100, 150}, false, true).contains(mousePos)) siteFocus = true;
                     if (drawInputBox(window, font, "Password:", sitePass, {100, 220}, true, true).contains(mousePos)) passFocus = true;
                     if (drawButton(window, font, "Save Password", {100, 300}).contains(mousePos)) {
-                        userPasswords[currentUser].push_back({siteInput, sitePass});
-                        savePasswords();
-                        siteInput = sitePass = "";
-                        screen = MENU;
+                        if (isWeakPassword(sitePass)) {
+                            suggestedPassword = generateStrongPassword();
+                            screen = CONFIRM_STRONG;
+                        } else {
+                            userPasswords[currentUser].push_back({siteInput, sitePass});
+                            savePasswords();
+                            siteInput = sitePass = "";
+                            screen = MENU;
+                        }
                     }
                 } else if (screen == SHOW_PASSWORDS) {
                     if (drawButton(window, font, "Back to Menu", {100, 500}).contains(mousePos)) screen = MENU;
                 } else if (screen == ERROR_MSG) {
                     if (drawButton(window, font, "OK", {300, 300}).contains(mousePos)) screen = LOGIN;
+                } else if (screen == CONFIRM_STRONG) {
+                    if (drawButton(window, font, "Use Suggested Password", {100, 300}).contains(mousePos)) {
+                        sitePass = suggestedPassword;
+                        userPasswords[currentUser].push_back({siteInput, sitePass});
+                        savePasswords();
+                        siteInput = sitePass = "";
+                        screen = MENU;
+                    } else if (drawButton(window, font, "Write Your Own", {400, 300}).contains(mousePos)) {
+                        screen = ADD_ACCOUNT;
+                    }
                 }
             }
 
@@ -185,12 +219,6 @@ int main() {
                     }
                 }
             }
-
-            if (event.type == sf::Event::KeyPressed && screen == MENU) {
-                if (event.key.code == sf::Keyboard::Num1) screen = ADD_ACCOUNT;
-                if (event.key.code == sf::Keyboard::Num2) screen = SHOW_PASSWORDS;
-                if (event.key.code == sf::Keyboard::Num3) window.close();
-            }
         }
 
         window.clear(sf::Color(30, 30, 30));
@@ -201,9 +229,15 @@ int main() {
             drawButton(window, font, screen == LOGIN ? "Login" : "Register", {100, 300});
             drawButton(window, font, screen == LOGIN ? "Create Account" : "Back", {350, 300});
         } else if (screen == MENU) {
-            drawButton(window, font, "1. Add Account", {100, 150});
-            drawButton(window, font, "2. Show Passwords", {100, 220});
-            drawButton(window, font, "3. Exit", {100, 290});
+            sf::Text title("Welcome to Password Manager", font, 28);
+            title.setFillColor(sf::Color::White);
+            title.setPosition(200, 80);
+            window.draw(title);
+
+            float startX = 275, startY = 180;
+            drawButton(window, font, "1. Add Account", {startX, startY});
+            drawButton(window, font, "2. Show Passwords", {startX, startY + 80});
+            drawButton(window, font, "3. Exit", {startX, startY + 160});
         } else if (screen == ADD_ACCOUNT) {
             drawInputBox(window, font, "App/Website:", siteInput, {100, 150}, false, siteFocus);
             drawInputBox(window, font, "Password:", sitePass, {100, 220}, true, passFocus);
@@ -224,6 +258,19 @@ int main() {
             text.setPosition(100, 150);
             window.draw(text);
             drawButton(window, font, "OK", {300, 300});
+        } else if (screen == CONFIRM_STRONG) {
+            sf::Text info("Weak password detected! Suggested:", font, 20);
+            info.setFillColor(sf::Color::Yellow);
+            info.setPosition(100, 150);
+            window.draw(info);
+
+            sf::Text suggestion(suggestedPassword, font, 20);
+            suggestion.setFillColor(sf::Color::White);
+            suggestion.setPosition(100, 190);
+            window.draw(suggestion);
+
+            drawButton(window, font, "Use Suggested Password", {100, 300});
+            drawButton(window, font, "Write Your Own", {400, 300});
         }
 
         window.display();
